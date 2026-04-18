@@ -1,0 +1,13 @@
+TITLE: Kaiwa Practice
+NAME: Samodra
+
+TEXT: Topik 1: Hobi
+TEXT: こんにちは、はじめまして。私は Alyssa です。Jakarta から来ました。お名前は何ですか？
+VIDEO: assets/video1.mov
+
+TEXT: 私の趣味は描くです。あなたはどうですか？
+VIDEO: assets/video2.mov
+
+TEXT: Topik 2: Makanan Favorit
+TEXT: こんにちは。私の好きな食べ物は Pizza です。あなたは何が好きですか？
+VIDEO: assets/2-1.mov
