@@ -11,6 +11,97 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 os.environ["IMAGEMAGICK_BINARY"] = "/opt/homebrew/bin/magick"
 from moviepy.editor import VideoFileClip, TextClip, concatenate_videoclips, CompositeVideoClip
 
+def crop_video_to_text(video_path, target_text):
+    """
+    Uses Whisper to find the target_text in the video's audio,
+    and returns the start and end timestamps.
+    """
+    import whisper
+    import imageio_ffmpeg
+    import ssl
+    import urllib.request
+    
+    # Ensure Whisper can find imageio's ffmpeg binary executing as 'ffmpeg'
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+    ffmpeg_symlink = os.path.join(ffmpeg_dir, 'ffmpeg')
+    if not os.path.exists(ffmpeg_symlink):
+        try:
+            os.symlink(ffmpeg_exe, ffmpeg_symlink)
+        except Exception:
+            pass # Ignore if we don't have write permissions, we'll gracefully try without
+            
+    if ffmpeg_dir not in os.environ["PATH"]:
+        os.environ["PATH"] += os.pathsep + ffmpeg_dir
+
+    if not hasattr(crop_video_to_text, "model"):
+        print("Loading Whisper model (might take a moment)...")
+        # Bypass SSL verification on mac for initial model download
+        try:
+            _create_unverified_https_context = ssl._create_unverified_context
+        except AttributeError:
+            pass
+        else:
+            ssl._create_default_https_context = _create_unverified_https_context
+            
+        crop_video_to_text.model = whisper.load_model("base")
+        
+    print(f"Transcribing '{video_path}' to find speech matching text...")
+    result = crop_video_to_text.model.transcribe(video_path)
+    segments = result["segments"]
+    
+    # Join all segment text and map char indices to timestamps
+    joined_text = ""
+    char_times = []
+    
+    for seg in segments:
+        text = seg["text"]
+        start = seg["start"]
+        end = seg["end"]
+        # keep only non-whitespace
+        clean_seg = "".join(text.split())
+        if not clean_seg:
+            continue
+            
+        time_per_char = (end - start) / len(clean_seg)
+        for i, char in enumerate(clean_seg):
+            joined_text += char.lower()
+            char_times.append((start + i * time_per_char, start + (i + 1) * time_per_char))
+            
+    import fuzzysearch
+    
+    clean_target = "".join(target_text.split()).lower()
+    
+    idx = joined_text.find(clean_target)
+    start_idx = None
+    end_idx = None
+    
+    if idx != -1:
+        start_idx = idx
+        end_idx = min(idx + len(clean_target) - 1, len(char_times) - 1)
+    else:
+        # Fallback to fuzzy search allowing up to 40% error margin
+        max_err = max(3, int(len(clean_target) * 0.4))
+        matches = fuzzysearch.find_near_matches(clean_target, joined_text, max_l_dist=max_err)
+        if matches:
+            best_match = min(matches, key=lambda m: m.dist)
+            start_idx = best_match.start
+            end_idx = min(best_match.end - 1, len(char_times) - 1)
+            print(f"Fuzzy match found! Matched with '{best_match.matched}' (error margin: {best_match.dist})")
+            
+    if start_idx is None:
+        raw_text = "".join(seg["text"] for seg in segments)
+        print(f"Warning: Exact string not found in transcription for {video_path}.")
+        print(f"Target sought: '{target_text}' (cleaned: {clean_target})")
+        print(f"Whisper heard: '{raw_text.strip()}'")
+        return None
+        
+    start_time = char_times[start_idx][0]
+    end_time = char_times[end_idx][1]
+    
+    # Pad by 0.3s
+    return max(0, start_time - 0.3), end_time + 0.3
+
 def parse_script(script_path):
     """Reads the script file and produces a timeline list."""
     timeline = []
@@ -20,7 +111,7 @@ def parse_script(script_path):
     with open(script_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if not line:
+            if not line or line.startswith("#") or line.startswith("//"):
                 continue
                 
             if line.startswith("TITLE:"):
@@ -32,8 +123,14 @@ def parse_script(script_path):
                 text = line.split(":", 1)[1].strip()
                 timeline.append({"type": "text", "text": text})
             elif line.startswith("VIDEO:"):
-                path = line.split(":", 1)[1].strip()
-                timeline.append({"type": "video", "path": path})
+                # e.g., VIDEO: assets/video.mov | CROP_TEXT: こんにちは
+                parts = [part.strip() for part in line.split(":", 1)[1].split("|")]
+                path = parts[0]
+                crop_text = None
+                for part in parts[1:]:
+                    if part.startswith("CROP_TEXT:"):
+                        crop_text = part.split(":", 1)[1].strip()
+                timeline.append({"type": "video", "path": path, "crop_text": crop_text})
                 
     if title and not name and not any(item["type"] == "title" for item in timeline):
          timeline.insert(0, {"type": "title", "text": title, "name": ""})
@@ -74,6 +171,14 @@ def build_timeline(timeline):
         elif item["type"] == "video":
             try:
                 clip = VideoFileClip(item["path"])
+                
+                # Check for speech cropping
+                if item.get("crop_text"):
+                    times = crop_video_to_text(item["path"], item["crop_text"])
+                    if times:
+                        clip = clip.subclip(times[0], times[1])
+                        print(f"Cropped {item['path']} to {times[0]:.2f}s - {times[1]:.2f}s")
+                
                 w, h = clip.size
                 # object-fit: cover logic
                 if w / h > 1280 / 720:
