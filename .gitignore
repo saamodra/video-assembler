@@ -2,3 +2,12 @@ venv/
 *.log
 assets/
 output/
+
+# Python caching
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS generated files
+.DS_Store
+Thumbs.db

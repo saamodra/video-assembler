@@ -125,7 +125,7 @@ def parse_script(script_path):
     """Reads the script file and produces a timeline list."""
     timeline = []
     title = None
-    name = None
+    subtitle = None
     
     with open(script_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -135,9 +135,9 @@ def parse_script(script_path):
                 
             if line.startswith("TITLE:"):
                 title = line.split(":", 1)[1].strip()
-            elif line.startswith("NAME:"):
-                name = line.split(":", 1)[1].strip()
-                timeline.insert(0, {"type": "title", "text": title, "name": name})
+            elif line.startswith("SUBTITLE:"):
+                subtitle = line.split(":", 1)[1].strip()
+                timeline.insert(0, {"type": "title", "text": title, "subtitle": subtitle})
             elif line.startswith("TEXT:"):
                 text = line.split(":", 1)[1].strip()
                 timeline.append({"type": "text", "text": text})
@@ -151,12 +151,12 @@ def parse_script(script_path):
                         crop_text = part.split(":", 1)[1].strip()
                 timeline.append({"type": "video", "path": path, "crop_text": crop_text})
                 
-    if title and not name and not any(item["type"] == "title" for item in timeline):
-         timeline.insert(0, {"type": "title", "text": title, "name": ""})
+    if title and not subtitle and not any(item["type"] == "title" for item in timeline):
+         timeline.insert(0, {"type": "title", "text": title, "subtitle": ""})
          
     return timeline
 
-def create_title_slide(title, name):
+def create_title_slide(title, subtitle):
     """Creates opening title slide using MoviePy."""
     res = tuple(CONFIG.get("resolution", [1280, 720]))
     dur = CONFIG.get("title_duration", 4)
@@ -166,11 +166,11 @@ def create_title_slide(title, name):
     title_clip = TextClip(title, font=font_path, fontsize=70, color='white', bg_color='black', size=res)
     title_clip = title_clip.set_position('center').set_duration(dur)
     
-    if name:
-        # Overlay name text
-        name_clip = TextClip(name, font=font_path, fontsize=40, color='white')
-        name_clip = name_clip.set_position(('center', 450)).set_duration(dur)
-        return CompositeVideoClip([title_clip, name_clip], size=res).set_duration(dur)
+    if subtitle:
+        # Overlay subtitle text
+        subtitle_clip = TextClip(subtitle, font=font_path, fontsize=40, color='white')
+        subtitle_clip = subtitle_clip.set_position(('center', 450)).set_duration(dur)
+        return CompositeVideoClip([title_clip, subtitle_clip], size=res).set_duration(dur)
         
     return title_clip
 
@@ -192,7 +192,7 @@ def build_timeline(timeline):
     clips = []
     for item in timeline:
         if item["type"] == "title":
-            clips.append(create_title_slide(item["text"], item.get("name")))
+            clips.append(create_title_slide(item["text"], item.get("subtitle")))
         elif item["type"] == "text":
             clips.append(create_text_slide(item["text"]))
         elif item["type"] == "video":
