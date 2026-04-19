@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import threading
 from pathlib import Path
 
 # Load config globally so all functions can use it
@@ -27,44 +28,68 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 os.environ["IMAGEMAGICK_BINARY"] = "/opt/homebrew/bin/magick"
 from moviepy.editor import VideoFileClip, TextClip, concatenate_videoclips, CompositeVideoClip
 
+transcribe_lock = threading.Lock()
+
 def crop_video_to_text(video_path, target_text):
     """
     Uses Whisper to find the target_text in the video's audio,
     and returns the start and end timestamps.
     """
-    import whisper
-    import imageio_ffmpeg
-    import ssl
-    import urllib.request
-    
-    # Ensure Whisper can find imageio's ffmpeg binary executing as 'ffmpeg'
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    ffmpeg_dir = os.path.dirname(ffmpeg_exe)
-    ffmpeg_symlink = os.path.join(ffmpeg_dir, 'ffmpeg')
-    if not os.path.exists(ffmpeg_symlink):
+    cache_path = f"{video_path}.json"
+    if os.path.exists(cache_path):
+        print(f"Using cached transcription from {cache_path}...")
         try:
-            os.symlink(ffmpeg_exe, ffmpeg_symlink)
-        except Exception:
-            pass # Ignore if we don't have write permissions, we'll gracefully try without
-            
-    if ffmpeg_dir not in os.environ["PATH"]:
-        os.environ["PATH"] += os.pathsep + ffmpeg_dir
+            with open(cache_path, "r", encoding="utf-8") as f:
+                segments = json.load(f)
+        except json.JSONDecodeError:
+            # Cache file might be corrupted or empty, fallback to re-transcribing
+            segments = None
 
-    if not hasattr(crop_video_to_text, "model"):
-        print("Loading Whisper model (might take a moment)...")
-        # Bypass SSL verification on mac for initial model download
-        try:
-            _create_unverified_https_context = ssl._create_unverified_context
-        except AttributeError:
-            pass
-        else:
-            ssl._create_default_https_context = _create_unverified_https_context
-            
-        crop_video_to_text.model = whisper.load_model("base")
+    if 'segments' not in locals() or segments is None:
+        with transcribe_lock:
+            # Recheck cache inside lock just in case another thread created it while we were waiting
+            if os.path.exists(cache_path):
+                print(f"Using cached transcription from {cache_path}...")
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    segments = json.load(f)
+            else:
+                import whisper
+                import imageio_ffmpeg
+                import ssl
+                import urllib.request
+                
+                # Ensure Whisper can find imageio's ffmpeg binary executing as 'ffmpeg'
+                ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+                ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+                ffmpeg_symlink = os.path.join(ffmpeg_dir, 'ffmpeg')
+                if not os.path.exists(ffmpeg_symlink):
+                    try:
+                        os.symlink(ffmpeg_exe, ffmpeg_symlink)
+                    except Exception:
+                        pass # Ignore if we don't have write permissions, we'll gracefully try without
+                        
+                if ffmpeg_dir not in os.environ["PATH"]:
+                    os.environ["PATH"] += os.pathsep + ffmpeg_dir
         
-    print(f"Transcribing '{video_path}' to find speech matching text...")
-    result = crop_video_to_text.model.transcribe(video_path, word_timestamps=True)
-    segments = result["segments"]
+                if not hasattr(crop_video_to_text, "model"):
+                    print("Loading Whisper model (might take a moment)...")
+                    # Bypass SSL verification on mac for initial model download
+                    try:
+                        _create_unverified_https_context = ssl._create_unverified_context
+                    except AttributeError:
+                        pass
+                    else:
+                        ssl._create_default_https_context = _create_unverified_https_context
+                        
+                    crop_video_to_text.model = whisper.load_model("base")
+                    
+                print(f"Transcribing '{video_path}' to find speech matching text...")
+                result = crop_video_to_text.model.transcribe(video_path, word_timestamps=True)
+                segments = result["segments"]
+                
+                print(f"Caching transcription to {cache_path}...")
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump(segments, f, ensure_ascii=False, indent=2)
     
     # Join all segment text and map char indices to timestamps
     joined_text = ""
@@ -186,40 +211,56 @@ def create_text_slide(text, duration=None):
     bg_clip = ColorClip(size=res, color=[0, 0, 0]).set_duration(duration)
     return CompositeVideoClip([bg_clip, txt_clip.set_position('center')]).set_duration(duration)
 
+def process_item(item):
+    if item["type"] == "title":
+        return create_title_slide(item["text"], item.get("subtitle"))
+    elif item["type"] == "text":
+        return create_text_slide(item["text"])
+    elif item["type"] == "video":
+        try:
+            clip = VideoFileClip(item["path"])
+            
+            # Check for speech cropping
+            if item.get("crop_text"):
+                times = crop_video_to_text(item["path"], item["crop_text"])
+                if times:
+                    start_t = times[0]
+                    end_t = min(times[1], clip.duration) if clip.duration else times[1]
+                    clip = clip.subclip(start_t, end_t)
+                    print(f"Cropped {item['path']} to {start_t:.2f}s - {end_t:.2f}s")
+            
+            w, h = clip.size
+            target_w, target_h = CONFIG.get("resolution", [1280, 720])
+            # object-fit: cover logic
+            if w / h > target_w / target_h:
+                clip = clip.resize(height=target_h)
+                clip = clip.crop(x_center=clip.size[0]/2, y_center=clip.size[1]/2, width=target_w, height=target_h)
+            else:
+                clip = clip.resize(width=target_w)
+                clip = clip.crop(x_center=clip.size[0]/2, y_center=clip.size[1]/2, width=target_w, height=target_h)
+            
+            return clip
+        except Exception as e:
+            print(f"Error loading {item['path']}: {e}")
+            return None
+    return None
+
 def build_timeline(timeline):
     """Returns list of clips based on timeline sequence."""
-    from moviepy.editor import ColorClip
-    clips = []
-    for item in timeline:
-        if item["type"] == "title":
-            clips.append(create_title_slide(item["text"], item.get("subtitle")))
-        elif item["type"] == "text":
-            clips.append(create_text_slide(item["text"]))
-        elif item["type"] == "video":
+    import concurrent.futures
+    print("Building clips in parallel...")
+    results = [None] * len(timeline)
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {executor.submit(process_item, item): i for i, item in enumerate(timeline)}
+        for future in concurrent.futures.as_completed(futures):
+            i = futures[future]
             try:
-                clip = VideoFileClip(item["path"])
-                
-                # Check for speech cropping
-                if item.get("crop_text"):
-                    times = crop_video_to_text(item["path"], item["crop_text"])
-                    if times:
-                        clip = clip.subclip(times[0], times[1])
-                        print(f"Cropped {item['path']} to {times[0]:.2f}s - {times[1]:.2f}s")
-                
-                w, h = clip.size
-                target_w, target_h = CONFIG.get("resolution", [1280, 720])
-                # object-fit: cover logic
-                if w / h > target_w / target_h:
-                    clip = clip.resize(height=target_h)
-                    clip = clip.crop(x_center=clip.size[0]/2, y_center=clip.size[1]/2, width=target_w, height=target_h)
-                else:
-                    clip = clip.resize(width=target_w)
-                    clip = clip.crop(x_center=clip.size[0]/2, y_center=clip.size[1]/2, width=target_w, height=target_h)
-                
-                clips.append(clip)
+                results[i] = future.result()
             except Exception as e:
-                print(f"Error loading {item['path']}: {e}")
-    return clips
+                print(f"Failed to process clip timeline item {i}: {e}")
+                
+    return [clip for clip in results if clip is not None]
 
 def render_video(clips, output_path):
     """Writes final output."""

@@ -17,18 +17,19 @@ We provide quick-start scripts that automatically configure your virtual environ
 
 ## Usage
 
-1. **Create your script:** Define your video sequence in a script file (e.g., `script.conf`). See `script.example.conf` for syntax.
-2. **Configure:** (Optional) Edit your `config.json` in the root directory to define global settings.
-3. **Build!** Run the CLI tool wrapper based on your platform:
+1. **Test the Demo:** We've included a demo video (`examples/demo_video.mp4`) and an example script. You can build it immediately to see how auto-cropping works!
+2. **Create your script:** Define your own video sequence in a script file (e.g., `script.conf`). See `script.example.conf` for syntax.
+3. **Configure:** (Optional) Edit your `config.json` in the root directory to define global settings.
+4. **Build!** Run the CLI tool wrapper based on your platform:
 
 **For macOS / Linux (Bash):**
 ```bash
-./run.sh script.conf
+./run.sh script.example.conf
 ```
 
 **For Windows (CMD / PowerShell):**
 ```cmd
-.\run.bat script.conf
+.\run.bat script.example.conf
 ```
 
 ### Running Manually

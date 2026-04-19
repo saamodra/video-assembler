@@ -11,3 +11,8 @@ __pycache__/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Config and local scripts
+script.conf
+*.mp4.json
+*.mov.json
