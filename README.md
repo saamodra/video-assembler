@@ -82,8 +82,6 @@ The parser accepts a plain text file using the following command directives:
 
 If you'd like to improve the tool, consider contributing the following:
 
-- **Transcription Caching:** Whisper currently re-transcribes the entire video every time a `VIDEO:` tag targets it. Caching local transcription results (e.g. `video.mov.json`) would drastically reduce build times when pulling multiple fragments from the same source clip.
 - **Subtitle Overlay:** As Whisper generates word-level timestamps anyway, an excellent feature would be hard-burning those subtitles onto the output video itself.
 - **Transitions:** Incorporating smooth `crossfadein` or fade-to-black effects via MoviePy would elevate the perceived quality.
-- **Parallel Processing:** Building the cache or generating slides concurrently before final assembly.
 - **Dynamic Framing:** Add options like `| FIT: contain` versus `cover` to avoid aggressively cropping out subjects in vertical video logic.
