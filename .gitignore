@@ -1,6 +1,6 @@
 venv/
 *.log
-assets/
+inputs/
 output/
 
 # Python caching
