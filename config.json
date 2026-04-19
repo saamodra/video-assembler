@@ -1,3 +1,9 @@
 {
-  "output_path": "output/final_video.mp4"
+  "output_path": "output/final_video.mp4",
+  "resolution": [1920, 1080],
+  "fps": 30,
+  "title_duration": 4,
+  "text_duration": 3,
+  "font_path": "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+  "crop_padding": 0.3
 }

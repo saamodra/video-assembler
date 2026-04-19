@@ -3,6 +3,22 @@ import os
 import json
 from pathlib import Path
 
+# Load config globally so all functions can use it
+CONFIG = {
+    "output_path": "output/final_video.mp4",
+    "resolution": [1280, 720],
+    "fps": 30,
+    "title_duration": 4,
+    "text_duration": 3,
+    "font_path": "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "crop_padding": 0.3
+}
+
+config_path = Path("config.json")
+if config_path.exists():
+    with open(config_path, "r") as f:
+        CONFIG.update(json.load(f))
+
 # Hot-patch Pillow 10+ for moviepy
 import PIL.Image
 if not hasattr(PIL.Image, 'ANTIALIAS'):
@@ -101,8 +117,9 @@ def crop_video_to_text(video_path, target_text):
     start_time = char_times[start_idx][0]
     end_time = char_times[end_idx][1]
     
-    # Pad by 0.3s
-    return max(0, start_time - 0.3), end_time + 0.3
+    # Pad so audio isn't cut off too abruptly
+    pad = CONFIG.get("crop_padding", 0.3)
+    return max(0, start_time - pad), end_time + pad
 
 def parse_script(script_path):
     """Reads the script file and produces a timeline list."""
@@ -141,24 +158,32 @@ def parse_script(script_path):
 
 def create_title_slide(title, name):
     """Creates opening title slide using MoviePy."""
-    # Ensure background is purely black, size 1280x720
-    title_clip = TextClip(title, font='/System/Library/Fonts/Supplemental/Arial Unicode.ttf', fontsize=70, color='white', bg_color='black', size=(1280, 720))
-    title_clip = title_clip.set_position('center').set_duration(4)
+    res = tuple(CONFIG.get("resolution", [1280, 720]))
+    dur = CONFIG.get("title_duration", 4)
+    font_path = CONFIG.get("font_path", '/System/Library/Fonts/Supplemental/Arial Unicode.ttf')
+    
+    # Ensure background is purely black, size based on config
+    title_clip = TextClip(title, font=font_path, fontsize=70, color='white', bg_color='black', size=res)
+    title_clip = title_clip.set_position('center').set_duration(dur)
     
     if name:
         # Overlay name text
-        name_clip = TextClip(name, font='/System/Library/Fonts/Supplemental/Arial Unicode.ttf', fontsize=40, color='white')
-        name_clip = name_clip.set_position(('center', 450)).set_duration(4)
-        return CompositeVideoClip([title_clip, name_clip], size=(1280, 720)).set_duration(4)
+        name_clip = TextClip(name, font=font_path, fontsize=40, color='white')
+        name_clip = name_clip.set_position(('center', 450)).set_duration(dur)
+        return CompositeVideoClip([title_clip, name_clip], size=res).set_duration(dur)
         
     return title_clip
 
-def create_text_slide(text, duration=3):
+def create_text_slide(text, duration=None):
     """Creates a text slide."""
+    if duration is None:
+        duration = CONFIG.get("text_duration", 3)
+    res = tuple(CONFIG.get("resolution", [1280, 720]))
+    font_path = CONFIG.get("font_path", '/System/Library/Fonts/Supplemental/Arial Unicode.ttf')
     from moviepy.editor import ColorClip
-    # Use method='caption' and width=1080 to auto-wrap Japanese text
-    txt_clip = TextClip(text, font='/System/Library/Fonts/Supplemental/Arial Unicode.ttf', method='caption', size=(1080, None), fontsize=50, color='white')
-    bg_clip = ColorClip(size=(1280, 720), color=[0, 0, 0]).set_duration(duration)
+    # Use method='caption' and width dynamically to auto-wrap Japanese text
+    txt_clip = TextClip(text, font=font_path, method='caption', size=(res[0] - 200, None), fontsize=50, color='white')
+    bg_clip = ColorClip(size=res, color=[0, 0, 0]).set_duration(duration)
     return CompositeVideoClip([bg_clip, txt_clip.set_position('center')]).set_duration(duration)
 
 def build_timeline(timeline):
@@ -182,13 +207,14 @@ def build_timeline(timeline):
                         print(f"Cropped {item['path']} to {times[0]:.2f}s - {times[1]:.2f}s")
                 
                 w, h = clip.size
+                target_w, target_h = CONFIG.get("resolution", [1280, 720])
                 # object-fit: cover logic
-                if w / h > 1280 / 720:
-                    clip = clip.resize(height=720)
-                    clip = clip.crop(x_center=clip.size[0]/2, y_center=clip.size[1]/2, width=1280, height=720)
+                if w / h > target_w / target_h:
+                    clip = clip.resize(height=target_h)
+                    clip = clip.crop(x_center=clip.size[0]/2, y_center=clip.size[1]/2, width=target_w, height=target_h)
                 else:
-                    clip = clip.resize(width=1280)
-                    clip = clip.crop(x_center=clip.size[0]/2, y_center=clip.size[1]/2, width=1280, height=720)
+                    clip = clip.resize(width=target_w)
+                    clip = clip.crop(x_center=clip.size[0]/2, y_center=clip.size[1]/2, width=target_w, height=target_h)
                 
                 clips.append(clip)
             except Exception as e:
@@ -210,7 +236,7 @@ def render_video(clips, output_path):
     print("Rendering video...")
     final_video.write_videofile(
         str(out_file),
-        fps=30,
+        fps=CONFIG.get("fps", 30),
         codec="libx264",
         audio_codec="aac"
     )
@@ -223,13 +249,7 @@ def main():
         
     script_path = sys.argv[1]
     
-    # Load optional config
-    config = {}
-    if Path("config.json").exists():
-        with open("config.json", "r") as f:
-            config = json.load(f)
-            
-    output_path = config.get("output_path", "output/final_video.mp4")
+    output_path = CONFIG.get("output_path", "output/final_video.mp4")
     
     timeline = parse_script(script_path)
     clips = build_timeline(timeline)
