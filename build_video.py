@@ -47,7 +47,7 @@ def crop_video_to_text(video_path, target_text):
         crop_video_to_text.model = whisper.load_model("base")
         
     print(f"Transcribing '{video_path}' to find speech matching text...")
-    result = crop_video_to_text.model.transcribe(video_path)
+    result = crop_video_to_text.model.transcribe(video_path, word_timestamps=True)
     segments = result["segments"]
     
     # Join all segment text and map char indices to timestamps
@@ -55,18 +55,20 @@ def crop_video_to_text(video_path, target_text):
     char_times = []
     
     for seg in segments:
-        text = seg["text"]
-        start = seg["start"]
-        end = seg["end"]
-        # keep only non-whitespace
-        clean_seg = "".join(text.split())
-        if not clean_seg:
-            continue
-            
-        time_per_char = (end - start) / len(clean_seg)
-        for i, char in enumerate(clean_seg):
-            joined_text += char.lower()
-            char_times.append((start + i * time_per_char, start + (i + 1) * time_per_char))
+        words = seg.get("words", [{"text": seg["text"], "start": seg["start"], "end": seg["end"]}])
+        for w in words:
+            text = w.get("word", w.get("text", ""))
+            start = w["start"]
+            end = w["end"]
+            # keep only non-whitespace
+            clean_word = "".join(text.split())
+            if not clean_word:
+                continue
+                
+            time_per_char = (end - start) / len(clean_word)
+            for i, char in enumerate(clean_word):
+                joined_text += char.lower()
+                char_times.append((start + i * time_per_char, start + (i + 1) * time_per_char))
             
     import fuzzysearch
     
